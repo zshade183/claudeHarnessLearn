@@ -1,6 +1,7 @@
 from agent.client import client
 from agent.config import MODEL, SYSTEM
 from agent.tools.registry import TOOLS, TOOL_HANDLERS
+from agent.permissions import check_permission
 
 
 def agent_loop(messages: list):
@@ -35,12 +36,25 @@ def agent_loop(messages: list):
         results = []
         # 处理工具调用
         for block in tool_calls:
-            print(f"\033[33m$ {block.input['command']}\033[0m")
-            # 调用工具处理函数
-            output = TOOL_HANDLERS[block.name](**block.input)
+            print(f"\033[36m> {block.name}\033[0m")
 
-            print(output[:200])
-            # 处理工具调用结果
+            if not check_permission(block):
+                results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": "Permission denied.",
+                })
+                continue
+
+            handler = TOOL_HANDLERS.get(block.name)
+            output = (
+                handler(**block.input)
+                if handler
+                else f"Unknown: {block.name}"
+            )
+
+            print(str(output)[:200])
+
             results.append({
                 "type": "tool_result",
                 "tool_use_id": block.id,

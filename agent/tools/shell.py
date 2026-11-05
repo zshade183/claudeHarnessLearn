@@ -1,4 +1,4 @@
-import os
+from agent.config import WORKDIR
 import subprocess
 
 
@@ -15,15 +15,12 @@ def run_bash(command: str) -> str:
         FileNotFoundError: If the command is not found.
         OSError: If the command fails for any other reason.
        """
-    dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"]
-    if any(d in command for d in dangerous):
-        return "Error: Dangerous command blocked"
-
+  
     try:
         r = subprocess.run(
             command,
             shell=True,  # 启用 shell 解析
-            cwd=os.getcwd(),  # 设置工作目录为当前目录
+            cwd=WORKDIR,  # 设置工作目录为当前目录
             capture_output=True,  # 捕获标准输出和错误输出
             text=True,  # 返回文本而不是字节
             errors="replace",  # 替换错误字符
