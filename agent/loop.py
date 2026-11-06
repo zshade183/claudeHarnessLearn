@@ -1,65 +1,68 @@
 from agent.client import client
-from agent.config import MODEL, SYSTEM
+from agent.config import MODEL
+from agent.prompts import SYSTEM
 from agent.tools.registry import TOOLS, TOOL_HANDLERS
-from agent.permissions import check_permission
+from agent.hooks import trigger_hooks
+from agent.tools.executor import execute_tool
 
 
 def agent_loop(messages: list):
-    """Main loop for the agent.
-    Args:
-        messages: List of messages to pass to the model.
-    """
+    rounds_since_todo = 0  # 未更新任务列表的轮数
     while True:
-        # 调用模型
-        response = client.messages.create(  
+        response = client.messages.create(
             model=MODEL,
             system=SYSTEM,
             messages=messages,
             tools=TOOLS,
             max_tokens=8000,
         )
-        # 处理模型响应
+
         messages.append({
             "role": "assistant",
             "content": response.content,
         })
-        # 处理工具调用
+
         tool_calls = [
             block
             for block in response.content
             if block.type == "tool_use"
         ]
 
-        if not tool_calls:
+        if not tool_calls:  # 没有工具调用，结束会话
+            force = trigger_hooks("Stop", messages)  # 触发Stop钩子
+            if force:
+                messages.append({
+                    "role": "user",
+                    "content": force,
+                })
+                continue
             return
 
         results = []
-        # 处理工具调用
+        used_todo = False
+
         for block in tool_calls:
-            print(f"\033[36m> {block.name}\033[0m")
+            output = execute_tool(block, TOOL_HANDLERS)
 
-            if not check_permission(block):
-                results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": "Permission denied.",
-                })
-                continue
-
-            handler = TOOL_HANDLERS.get(block.name)
-            output = (
-                handler(**block.input)
-                if handler
-                else f"Unknown: {block.name}"
-            )
-
-            print(str(output)[:200])
+            if block.name == "todo_write":
+                used_todo = True
 
             results.append({
                 "type": "tool_result",
                 "tool_use_id": block.id,
                 "content": output,
             })
+
+        rounds_since_todo = (
+            0 if used_todo else rounds_since_todo + 1
+        )
+
+        if rounds_since_todo >= 3:
+            results.append({
+                "type": "text",
+                "text": "<reminder>Update your todos.</reminder>",
+            })
+            rounds_since_todo = 0
 
         messages.append({
             "role": "user",

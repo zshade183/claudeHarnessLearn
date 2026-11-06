@@ -13,6 +13,7 @@ except ImportError:
     pass
 
 from agent.loop import agent_loop
+from agent.hooks import trigger_hooks
 
 
 if __name__ == "__main__":
@@ -37,6 +38,7 @@ if __name__ == "__main__":
         if query.strip().lower() in ("q", "exit"):
             break
 
+        trigger_hooks("UserPromptSubmit", query)  # 触发UserPromptSubmit钩子
         history.append({
             "role": "user",
             "content": query,

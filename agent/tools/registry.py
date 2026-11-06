@@ -1,78 +1,85 @@
-from agent.tools.files import run_read, run_write, run_edit, run_glob
-from agent.tools.shell import run_bash
+from agent.planning import run_todo_write
+from agent.subagents import run_subagent
+from agent.tools.base import BASE_TOOLS, BASE_HANDLERS
+from agent.skills import SKILL_LOADER
 
 # 注册工具 
-TOOLS = [
-    {  
-        "name": "bash",
-        "description": "Run a shell command.",
-        "input_schema": {
-            "type": "object",  # 输入参数为对象
-            "properties": {  # 定义输入参数
-                "command": {
-                    "type": "string",
+TODO_TOOL = {
+    "name": "todo_write",
+    "description": (
+        "Create and manage a task list for your current coding session."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "todos": {
+                "type": "array",
+                "maxItems": 20,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "content": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
+                        "status": {
+                            "type": "string",
+                            "enum": [
+                                "pending",
+                                "in_progress",
+                                "completed",
+                            ],
+                        },
+                    },
+                    "required": ["content", "status"],
                 },
             },
-            "required": ["command"],  # 必须提供 command 参数
         },
+        "required": ["todos"],
     },
-    {
-        "name": "read_file",
-        "description": "Read file contents.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "limit": {"type": "integer"},
+}
+TASK_TOOL = {
+    "name": "task",
+    "description": (
+        "Run a subagent with fresh conversation context "
+        "and return its final text."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "prompt": {
+                "type": "string",
+                "minLength": 1,
             },
-            "required": ["path"],
         },
+        "required": ["prompt"],
     },
-        {
-        "name": "write_file",
-        "description": "Write content to a file.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "content": {"type": "string"},
+}
+
+LOAD_SKILL_TOOL = {
+    "name": "load_skill",
+    "description": "Load the full SKILL.md content by skill name.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
             },
-            "required": ["path", "content"],
         },
+        "required": ["name"],
     },
-    {
-        "name": "edit_file",
-        "description": "Replace exact text in a file once.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "old_text": {"type": "string"},
-                "new_text": {"type": "string"},
-            },
-            "required": ["path", "old_text", "new_text"],
-        },
-    },
-        {
-        "name": "glob",
-        "description": (
-            "Find files matching a glob pattern; ** matches recursively."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "pattern": {"type": "string"},
-            },
-            "required": ["pattern"],
-        },
-    },
+}
+
+TOOLS = [
+    *BASE_TOOLS,
+    TODO_TOOL,
+    TASK_TOOL,
+    LOAD_SKILL_TOOL,
 ]
 
-# 注册工具处理函数
 TOOL_HANDLERS = {
-    "bash": run_bash,
-    "read_file": run_read,
-    "write_file": run_write,
-    "edit_file": run_edit,
-    "glob": run_glob,
+    **BASE_HANDLERS,
+    "todo_write": run_todo_write,
+    "task": run_subagent,
+    "load_skill": SKILL_LOADER.load,
 }

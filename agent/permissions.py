@@ -16,7 +16,8 @@ DENY_LIST = [
 
 def check_deny_list(command: str) -> str | None:
     """
-    Check the command against if any deny-listed patterns are found.
+    检查命令是否包含拒绝列表中的模式。
+    如果包含，返回拒绝原因；否则返回None。
     """
     for pattern in DENY_LIST:
         if pattern in command:
@@ -79,7 +80,7 @@ def ask_user(tool_name: str, args: dict, reason: str) -> str:
 
 def check_permission(block) -> bool:
     """
-    Check the permissions of the tool call.
+    检查工具调用是否有用权限。
     """
     if block.name == "bash":
         reason = check_deny_list(block.input.get("command", ""))
@@ -95,3 +96,12 @@ def check_permission(block) -> bool:
             return False
 
     return True
+
+def permission_hook(block):
+    """
+    Hook to check the permissions of the tool call.
+    """
+
+    if not check_permission(block):
+        return "Permission denied."
+    return None
