@@ -70,11 +70,21 @@ LOAD_SKILL_TOOL = {
     },
 }
 
+COMPACT_TOOL = {
+    "name": "compact",
+    "description": "Summarize earlier conversation to free context space.",
+    "input_schema": {
+        "type": "object",
+        "properties": {},
+    },
+}
+
 TOOLS = [
     *BASE_TOOLS,
     TODO_TOOL,
     TASK_TOOL,
     LOAD_SKILL_TOOL,
+    COMPACT_TOOL,
 ]
 
 TOOL_HANDLERS = {

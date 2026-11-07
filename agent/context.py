@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 import re
 import uuid
+from agent.client import client
+from agent.config import MODEL, TOOL_RESULTS_DIR, TRANSCRIPT_DIR
 
 
 class ContextCompactor:
@@ -26,9 +28,9 @@ class ContextCompactor:
         tool_results_dir: Path,
     ):
         self.client = llm_client
-        self.model = model
-        self.transcript_dir = transcript_dir
-        self.tool_results_dir = tool_results_dir
+        self.model = model  # 模型 ID
+        self.transcript_dir = transcript_dir  # 历史归档目录
+        self.tool_results_dir = tool_results_dir  # 大工具调用结果目录
 
     @staticmethod
     def estimate_chars(messages: list) -> int:
@@ -653,3 +655,114 @@ class ContextCompactor:
                 transcript,
             )
         ]
+
+    def prepare(self, messages: list, active_request: str) -> list:
+        """
+        每次调用模型前的压缩流水线：先便宜无损，再昂贵有损
+        :param messages: 上下文消息列表
+        :param active_request: 当前用户请求
+        :return: 更新后的上下文消息列表
+        """
+        # 第 1 层：最新一批工具结果里，过大的落盘
+        messages = self.tool_result_budget(messages)
+
+        # 第 2 层：消息条数太多时，把中间整段归档成一行标记
+        before_snip = messages
+        messages = self.snip_compact(messages)
+
+        # snip 可能把当前请求一起剪进归档，必须补回，否则模型失去指令
+        """用户的原始提问（`active_request` ）在多轮对话后会落在 中间位置 ——它后面已经堆了一大堆工具调用和结果。
+        而 snip 是按条数机械地砍中间的， 很可能把这条请求一起归档到磁盘里 。"""
+        active_request_marker = (
+            f"Current user request:\n{active_request}\n\n"
+            "Conversation summary (reference only):"
+        )
+        if (
+            messages is not before_snip  # snip 后，消息列表可能被修改了
+            and not any(
+                message.get("role") == "user"
+                and isinstance(message.get("content"), str)
+                and (
+                    message["content"] == active_request
+                    or active_request_marker in message["content"]
+                )
+                for message in messages
+            )
+        ):  # 如果当前请求不在消息列表，补回
+            messages.append({
+                "role": "user",
+                "content": active_request,
+            })
+
+        # 第 3、4、5 层：总字符仍超标才动，目标是压到阈值的 80%
+        if self.estimate_chars(messages) > self.CONTEXT_CHAR_LIMIT:
+            target = int(self.CONTEXT_CHAR_LIMIT * 0.8)
+            messages = self.micro_compact(messages, target)
+
+            if self.estimate_chars(messages) > self.CONTEXT_CHAR_LIMIT:
+                messages = self.fit_tool_results(messages, target)
+
+            # 终极手段：叫模型写摘要，有损且花钱
+            if self.estimate_chars(messages) > self.CONTEXT_CHAR_LIMIT:
+                print("[auto compact]")
+                messages = self.compact_history(
+                    messages,
+                    active_request,
+                )
+
+        return messages
+    
+    """
+    为什么需要两个：因为估算会失手。
+    可能的情况：阈值估低了、系统提示词突然变长、模型输出 max_tokens 撑爆、
+    换了模型上下文窗口更小。
+    这时候 API 会抛 prompt is too long: N tokens > M maximum。
+    此时不能崩、也不能丢用户请求——必须立刻压一次再重试。
+    """
+    def reactive_compact(
+        self,
+        messages: list,
+        active_request: str,
+    ) -> list:
+        """
+        预防失败后的兜底：保留最近的对话，把更早的历史压成摘要
+        """
+        transcript = self.write_transcript(messages)
+        print(f"[transcript saved: {transcript}]")
+
+        tail_start = max(  # 保留最近的对话
+            0,
+            len(messages) - self.KEEP_RECENT_MESSAGES,  
+        )
+
+        # 别把 tool_use / tool_result 这一对切开
+        if (
+            tail_start > 0
+            and self.is_tool_result(messages[tail_start])
+            and self.has_tool_use(messages[tail_start - 1])
+        ):
+            tail_start -= 1
+
+        old_history = messages[:tail_start] if tail_start else messages
+        summary = self.summarize_history(old_history)
+
+        message = self.summary_message(
+            "Reactive compact",
+            active_request,
+            summary,
+            transcript,
+        )
+
+        if not tail_start:
+            return [message]
+
+        return [message, *messages[tail_start:]]
+# 文件底部，紧跟类定义之后
+COMPACTOR = ContextCompactor(
+    client,
+    MODEL,
+    TRANSCRIPT_DIR,
+    TOOL_RESULTS_DIR,
+)
+
+MAX_REACTIVE_RETRIES = 1

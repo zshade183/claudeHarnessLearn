@@ -44,7 +44,7 @@ if __name__ == "__main__":
             "content": query,
         })
 
-        agent_loop(history)
+        agent_loop(history, query)
 
         response_content = history[-1]["content"]
 
