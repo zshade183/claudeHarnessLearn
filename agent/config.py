@@ -10,6 +10,8 @@ WORKDIR = Path.cwd()
 SKILLS_DIR = WORKDIR / "skills"  #技能目录
 TRANSCRIPT_DIR = WORKDIR / ".transcripts"  #历史归档目录
 TOOL_RESULTS_DIR = WORKDIR / ".task_outputs" / "tool-results"  #大工具调用结果目录
+MEMORY_DIR = WORKDIR / ".memory"
+MEMORY_INDEX = MEMORY_DIR / "MEMORY.md"
 
 MODEL = os.environ["MODEL_ID"]
 BASE_URL = os.getenv("ANTHROPIC_BASE_URL")

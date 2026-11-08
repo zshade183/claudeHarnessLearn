@@ -1,10 +1,16 @@
 from agent.client import client
 from agent.config import MODEL
-from agent.prompts import SYSTEM
+from agent.prompts import build_system_prompt
 from agent.tools.registry import TOOLS, TOOL_HANDLERS
 from agent.hooks import trigger_hooks
 from agent.tools.executor import execute_tool
 from agent.context import COMPACTOR, MAX_REACTIVE_RETRIES
+# 顶部 import 合并成一行
+from agent.memory import (
+    consolidate_memories,
+    extract_memories,
+    load_memories,
+)
 
 
 def agent_loop(messages: list, active_request: str):
@@ -12,10 +18,13 @@ def agent_loop(messages: list, active_request: str):
     主循环，处理用户输入、模型调用、工具执行、上下文压缩等。
     params:
         messages: 当前会话的消息列表
-        active_request: 当前会话的请求ID
+        active_request: 当前会话的请求文本
     """
     rounds_since_todo = 0  # 未更新任务列表的轮数
     reactive_retries = 0  # 已做过的补救压缩次数
+
+    # 本回合开场召回一次，拼进 system prompt
+    system = build_system_prompt(load_memories(messages))
 
     while True:
         # 每次请求模型前，先把上下文压回安全范围
@@ -24,7 +33,7 @@ def agent_loop(messages: list, active_request: str):
         try:
             response = client.messages.create(
                 model=MODEL,
-                system=SYSTEM,
+                system=system,
                 messages=messages,
                 tools=TOOLS,
                 max_tokens=8000,
@@ -69,6 +78,9 @@ def agent_loop(messages: list, active_request: str):
                     "content": force,
                 })
                 continue
+             # 回合真正结束：提取可复用知识，达标就整理
+            if extract_memories(messages):
+                consolidate_memories()
             return
 
         results = []

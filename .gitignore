@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 .transcripts/
 .task_outputs/
+.memory/
