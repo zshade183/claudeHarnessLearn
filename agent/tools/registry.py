@@ -2,6 +2,7 @@ from agent.planning import run_todo_write
 from agent.subagents import run_subagent
 from agent.tools.base import BASE_TOOLS, BASE_HANDLERS
 from agent.skills import SKILL_LOADER
+from agent.tools.task_tools import TASK_HANDLERS, TASK_TOOLS
 
 # 注册工具 
 TODO_TOOL = {
@@ -85,6 +86,7 @@ TOOLS = [
     TASK_TOOL,
     LOAD_SKILL_TOOL,
     COMPACT_TOOL,
+    *TASK_TOOLS,
 ]
 
 TOOL_HANDLERS = {
@@ -92,4 +94,5 @@ TOOL_HANDLERS = {
     "todo_write": run_todo_write,
     "task": run_subagent,
     "load_skill": SKILL_LOADER.load,
+    **TASK_HANDLERS,
 }

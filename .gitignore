@@ -5,3 +5,4 @@ __pycache__/
 .transcripts/
 .task_outputs/
 .memory/
+.tasks/

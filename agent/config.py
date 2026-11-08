@@ -10,8 +10,10 @@ WORKDIR = Path.cwd()
 SKILLS_DIR = WORKDIR / "skills"  #技能目录
 TRANSCRIPT_DIR = WORKDIR / ".transcripts"  #历史归档目录
 TOOL_RESULTS_DIR = WORKDIR / ".task_outputs" / "tool-results"  #大工具调用结果目录
-MEMORY_DIR = WORKDIR / ".memory"
-MEMORY_INDEX = MEMORY_DIR / "MEMORY.md"
+MEMORY_DIR = WORKDIR / ".memory"  #记忆目录
+MEMORY_INDEX = MEMORY_DIR / "MEMORY.md"  #记忆索引文件
+TASKS_DIR = WORKDIR / ".tasks"  #任务目录
+
 
 MODEL = os.environ["MODEL_ID"]
 BASE_URL = os.getenv("ANTHROPIC_BASE_URL")
@@ -31,6 +33,9 @@ SYSTEM = (
     "Before starting any multi-step task, use todo_write to plan your steps. "
     "Update status as you go."
     "Use task for focused exploration or a self-contained subtask."
+    "For work that needs persistent progress or dependencies, use the task tools. "
+    "Create the tasks first, then use their returned IDs in update_task. "
+    "Claim a task before working on it and complete it after the work is done."
 )
 
 # 子系统提示
