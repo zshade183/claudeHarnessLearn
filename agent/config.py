@@ -35,7 +35,9 @@ SYSTEM = (
     "Use task for focused exploration or a self-contained subtask."
     "For work that needs persistent progress or dependencies, use the task tools. "
     "Create the tasks first, then use their returned IDs in update_task. "
-    "Claim a task before working on it and complete it after the work is done."
+    "Claim a task before working on it and complete it after the work is done. "
+    "Use schedule_cron for work the user wants to start at a future local time. "
+    "A message starting with [Scheduled] is the prompt for a due cron job."
 )
 
 # 子系统提示

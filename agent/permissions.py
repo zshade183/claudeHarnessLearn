@@ -1,4 +1,5 @@
 import re
+import threading
 
 from agent.config import WORKDIR
 
@@ -72,6 +73,12 @@ def ask_user(tool_name: str, args: dict, reason: str) -> str:
     """
     Ask the user for permission to run the tool call.
     """
+    # 定时任务在后台线程中执行。终端输入由主线程负责，
+    # 需要人工批准的操作在定时回合中直接拒绝。
+    if threading.current_thread() is not threading.main_thread():
+        print(f"[permission] Scheduled turn cannot request approval: {reason}")
+        return "deny"
+
     print(f"\n\033[33m[permission] {reason}\033[0m")
     print(f"   Tool: {tool_name}({args})")
 

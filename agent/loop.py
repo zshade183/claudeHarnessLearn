@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from agent.client import client
 from agent.config import MODEL
 from agent.prompts import build_system_prompt
@@ -14,7 +16,12 @@ from agent.memory import (
 )
 
 
-def agent_loop(messages: list, active_request: str):
+def agent_loop(
+    messages: list,
+    active_request: str,
+    *,
+    on_first_response: Callable[[], None] | None = None,
+):
     """
     主循环，处理用户输入、模型调用、工具执行、上下文压缩等。
     params:
@@ -62,6 +69,12 @@ def agent_loop(messages: list, active_request: str):
                 reactive_retries += 1
                 continue
             raise
+
+        # 首次请求成功说明模型收到了定时指令。先确认交付，再执行工具。
+        # 放在请求的异常处理之外，保存失败时应重试交付，而不是压缩上下文。
+        if on_first_response is not None:
+            on_first_response()
+            on_first_response = None
 
         messages.append({
             "role": "assistant",

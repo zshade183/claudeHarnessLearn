@@ -2,6 +2,7 @@ from agent.planning import run_todo_write
 from agent.subagents import run_subagent
 from agent.tools.base import BASE_TOOLS, BASE_HANDLERS
 from agent.skills import SKILL_LOADER
+from agent.tools.cron_tools import CRON_HANDLERS, CRON_TOOLS
 from agent.tools.task_tools import TASK_HANDLERS, TASK_TOOLS
 from copy import deepcopy
 
@@ -99,6 +100,7 @@ TOOLS = [
     LOAD_SKILL_TOOL,
     COMPACT_TOOL,
     *TASK_TOOLS,
+    *CRON_TOOLS,
 ]
 
 TOOL_HANDLERS = {
@@ -107,4 +109,5 @@ TOOL_HANDLERS = {
     "task": run_subagent,
     "load_skill": SKILL_LOADER.load,
     **TASK_HANDLERS,
+    **CRON_HANDLERS,
 }

@@ -6,3 +6,5 @@ __pycache__/
 .task_outputs/
 .memory/
 .tasks/
+.scheduled_tasks.json
+.scheduled_tasks.json.*.tmp
