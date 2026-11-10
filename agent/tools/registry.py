@@ -3,6 +3,7 @@ from agent.subagents import run_subagent
 from agent.tools.base import BASE_TOOLS, BASE_HANDLERS
 from agent.skills import SKILL_LOADER
 from agent.tools.task_tools import TASK_HANDLERS, TASK_TOOLS
+from copy import deepcopy
 
 # 注册工具 
 TODO_TOOL = {
@@ -80,8 +81,19 @@ COMPACT_TOOL = {
     },
 }
 
+# 主代理和子代理共用基础工具定义。复制内部字典后，
+# 只给"主代理"的 bash 工具增加一个可选参数`run_in_background` ，
+# 而"子代理"的 bash 保持原样。
+main_base_tools = deepcopy(BASE_TOOLS)
+bash_tool = next(tool for tool in main_base_tools if tool["name"] == "bash")
+
+bash_tool["input_schema"]["properties"]["run_in_background"] = {
+    "type": "boolean",
+    "description": "Set to true for an independent command that can finish later.",
+}
+
 TOOLS = [
-    *BASE_TOOLS,
+    *main_base_tools,
     TODO_TOOL,
     TASK_TOOL,
     LOAD_SKILL_TOOL,

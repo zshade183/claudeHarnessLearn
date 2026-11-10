@@ -5,6 +5,7 @@ from agent.tools.registry import TOOLS, TOOL_HANDLERS
 from agent.hooks import trigger_hooks
 from agent.tools.executor import execute_tool
 from agent.context import COMPACTOR, MAX_REACTIVE_RETRIES
+from agent.background import inject_background_results
 # 顶部 import 合并成一行
 from agent.memory import (
     consolidate_memories,
@@ -27,6 +28,9 @@ def agent_loop(messages: list, active_request: str):
     system = build_system_prompt(load_memories(messages))
 
     while True:
+        # 只收已经完成的结果。如果命令还在跑，这里立即返回。
+        inject_background_results(messages)
+
         # 每次请求模型前，先把上下文压回安全范围
         messages[:] = COMPACTOR.prepare(messages, active_request)
 
@@ -93,7 +97,11 @@ def agent_loop(messages: list, active_request: str):
                 output = "Compaction requested after this tool batch."
                 compact_requested = True
             else:
-                output = execute_tool(block, TOOL_HANDLERS)
+                output = execute_tool(
+                    block,
+                    TOOL_HANDLERS,
+                    allow_background=True,
+                )
 
             if block.name == "todo_write":
                 used_todo = True
