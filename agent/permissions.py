@@ -1,7 +1,7 @@
 import re
 import threading
 
-from agent.config import WORKDIR
+from agent.config import TOOL_CWD, WORKDIR
 
 
 DENY_LIST = [
@@ -38,12 +38,15 @@ def contains_destructive_command(command: str) -> bool:
     return bool(DESTRUCTIVE_COMMAND_WORD.search(command))  
 
 # 定义权限规则
+def path_outside_workspace(args: dict) -> bool:
+    cwd = (TOOL_CWD.get() or WORKDIR).resolve()
+    return not (cwd / args.get("path", "")).resolve().is_relative_to(cwd)
+
+
 PERMISSION_RULES = [
     {  # 读取文件、写入文件、编辑文件工具
         "tools": ["read_file", "write_file", "edit_file"],
-        "check": lambda args: not (
-            WORKDIR / args.get("path", "")
-        ).resolve().is_relative_to(WORKDIR),
+        "check": path_outside_workspace,
         "message": "Writing outside workspace",
     },
     {  # bash工具
@@ -76,7 +79,7 @@ def ask_user(tool_name: str, args: dict, reason: str) -> str:
     # 定时任务在后台线程中执行。终端输入由主线程负责，
     # 需要人工批准的操作在定时回合中直接拒绝。
     if threading.current_thread() is not threading.main_thread():
-        print(f"[permission] Scheduled turn cannot request approval: {reason}")
+        print(f"[permission] Background turn cannot request approval: {reason}")
         return "deny"
 
     print(f"\n\033[33m[permission] {reason}\033[0m")

@@ -1,4 +1,5 @@
 import os
+from contextvars import ContextVar
 
 from pathlib import Path  
 from dotenv import load_dotenv
@@ -7,6 +8,8 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 WORKDIR = Path.cwd()
+# 每次工具调用单独指定起点。主代理、后台任务和队友互不影响。
+TOOL_CWD: ContextVar[Path | None] = ContextVar("tool_cwd", default=None)
 SKILLS_DIR = WORKDIR / "skills"  #技能目录
 TRANSCRIPT_DIR = WORKDIR / ".transcripts"  #历史归档目录
 TOOL_RESULTS_DIR = WORKDIR / ".task_outputs" / "tool-results"  #大工具调用结果目录
@@ -36,6 +39,12 @@ SYSTEM = (
     "For work that needs persistent progress or dependencies, use the task tools. "
     "Create the tasks first, then use their returned IDs in update_task. "
     "Claim a task before working on it and complete it after the work is done. "
+    "When team work would help, propose a small team and wait for user confirmation "
+    "before using spawn_teammate. Create tasks and dependencies first. "
+    "For parallel edits that may conflict, bind a pending task with create_worktree "
+    "before assigning it with spawn_teammate(task_id=...). Use require_plan when "
+    "the teammate should plan first. When a teammate is working, finish your turn "
+    "and let the runtime deliver team results as they arrive. "
     "Use schedule_cron for work the user wants to start at a future local time. "
     "A message starting with [Scheduled] is the prompt for a due cron job."
 )

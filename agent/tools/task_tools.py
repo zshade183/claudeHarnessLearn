@@ -58,9 +58,10 @@ def run_list_tasks() -> str:
             if task.blockedBy
             else ""
         )
+        worktree = f" (worktree: {task.worktree})" if task.worktree is not None else ""
         lines.append(
             f"{marker} {task.id}: {task.subject} "
-            f"[{task.status}]{owner}{dependencies}"
+            f"[{task.status}]{owner}{dependencies}{worktree}"
         )
 
     return "\n".join(lines)

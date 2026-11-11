@@ -1,6 +1,6 @@
 
 
-from agent.config import WORKDIR
+from agent.config import TOOL_CWD, WORKDIR
 
 
 def run_read(path: str, limit: int | None = None) -> str:
@@ -16,7 +16,8 @@ def run_read(path: str, limit: int | None = None) -> str:
         OSError: If the file fails for any other reason.
     """
     try:
-        lines = (WORKDIR / path).resolve().read_text(encoding="utf-8").splitlines()
+        cwd = TOOL_CWD.get() or WORKDIR
+        lines = (cwd / path).resolve().read_text(encoding="utf-8").splitlines()
         if limit and limit < len(lines):
             lines = lines[:limit] + [
                 f"... ({len(lines) - limit} more lines)"
@@ -38,7 +39,7 @@ def run_write(path: str, content: str) -> str:
         OSError: If the file fails for any other reason.
     """
     try:
-        file_path = (WORKDIR / path).resolve()
+        file_path = ((TOOL_CWD.get() or WORKDIR) / path).resolve()
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")
         return f"Wrote {len(content)} bytes to {path}"
@@ -59,7 +60,7 @@ def run_edit(path: str, old_text: str, new_text: str) -> str:
         OSError: If the file fails for any other reason.
     """
     try:
-        file_path = (WORKDIR / path).resolve()
+        file_path = ((TOOL_CWD.get() or WORKDIR) / path).resolve()
         text = file_path.read_text(encoding="utf-8")
 
         if old_text not in text:
@@ -85,14 +86,15 @@ def run_glob(pattern: str) -> str:
     import glob as g  
 
     try:
+        cwd = (TOOL_CWD.get() or WORKDIR).resolve()
         matches = sorted({  # 去重
             match
             for match in g.glob(
                 pattern,
-                root_dir=WORKDIR,
+                root_dir=cwd,
                 recursive=True,
             )
-            if (WORKDIR / match).resolve().is_relative_to(WORKDIR)  # 确保路径在工作目录内
+            if (cwd / match).resolve().is_relative_to(cwd)
         })
 
         shown = matches[:200]  # 只显示前200个匹配

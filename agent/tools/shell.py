@@ -5,7 +5,7 @@ import subprocess
 import threading
 import time
 
-from agent.config import WORKDIR
+from agent.config import TOOL_CWD, WORKDIR
 
 
 _shell_processes: set[subprocess.Popen] = set()
@@ -85,7 +85,7 @@ def _run_bash_process(command: str) -> tuple[str, int | None]:
         process = subprocess.Popen(
             command,
             shell=True,
-            cwd=WORKDIR,
+            cwd=TOOL_CWD.get() or WORKDIR,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

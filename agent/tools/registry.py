@@ -4,7 +4,9 @@ from agent.tools.base import BASE_TOOLS, BASE_HANDLERS
 from agent.skills import SKILL_LOADER
 from agent.tools.cron_tools import CRON_HANDLERS, CRON_TOOLS
 from agent.tools.task_tools import TASK_HANDLERS, TASK_TOOLS
+from agent.tools.team_tools import TEAM_HANDLERS, TEAM_TOOLS
 from copy import deepcopy
+
 
 # 注册工具 
 TODO_TOOL = {
@@ -101,6 +103,7 @@ TOOLS = [
     COMPACT_TOOL,
     *TASK_TOOLS,
     *CRON_TOOLS,
+    *TEAM_TOOLS,
 ]
 
 TOOL_HANDLERS = {
@@ -110,4 +113,5 @@ TOOL_HANDLERS = {
     "load_skill": SKILL_LOADER.load,
     **TASK_HANDLERS,
     **CRON_HANDLERS,
+    **TEAM_HANDLERS,
 }

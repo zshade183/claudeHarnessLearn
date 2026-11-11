@@ -4,6 +4,8 @@
 自包含的子任务，只把最终文本总结返回，避免大量中间工具输出污染主对话历史。
 """
 
+from collections.abc import Callable
+
 from agent.client import client
 from agent.config import MODEL, SUB_SYSTEM
 from agent.hooks import trigger_hooks
@@ -35,7 +37,6 @@ def extract_text(content) -> str:
         if getattr(block, "type", None) == "text"
     )
 
-
 def run_subagent(prompt: str) -> str:
     """
     运行子系统。
@@ -44,16 +45,47 @@ def run_subagent(prompt: str) -> str:
     """
     print("\n\033[35m[Subagent started]\033[0m")
 
-    # 全新的独立上下文：不含任何主代理历史，实现上下文隔离
-    messages = [{"role": "user", "content": prompt}]  # 子系统提示
+    # 每次调用 task 都从一份新历史开始。
+    messages = [{"role": "user", "content": prompt}]
+    return run_subagent_turn(messages)
 
+
+def run_subagent_turn(
+    messages: list,
+    *,
+    allowed_tools: set[str] | None = None,
+    extra_tools: list[dict] | None = None,
+    extra_handlers: dict | None = None,
+    dispatch: Callable | None = None,
+    system: str = SUB_SYSTEM,
+) -> str:
+    """用指定的工具范围完成一轮对话。
+    :param messages: 子系统当前对话历史
+    :param allowed_tools: 允许的工具名称集合
+    :param extra_tools: 这轮额外提供给模型的工具描述
+    :param extra_handlers: 这轮额外的工具执行函数
+    :param dispatch: 队友可在基础执行器之前检查任务和审批状态
+    :return: 子系统响应
+    """
+    # 额外工具只加入当前回合。最后筛选工具描述和执行函数，保证两边一致。
+    tools = [*SUB_TOOLS, *(extra_tools or [])]
+    handlers = {**SUB_HANDLERS, **(extra_handlers or {})}
+    if allowed_tools is not None:
+        tools = [tool for tool in tools if tool["name"] in allowed_tools]
+        handlers = {
+            name: handler
+            for name, handler in handlers.items()
+            if name in allowed_tools
+        }
+
+    # 下面接原来的 for _ in range(30):
     # 最多 30 轮，作为兜底防止子代理陷入死循环（主代理循环没有此上限）
     for _ in range(30):
         response = client.messages.create(
             model=MODEL,
-            system=SUB_SYSTEM,  # 独立的 system prompt，仅要求"完成并返回简洁答案"
+            system=system,
             messages=messages,
-            tools=SUB_TOOLS,  # 精简工具集，见上方说明
+            tools=tools,
             max_tokens=8000,
         )
 
@@ -85,7 +117,7 @@ def run_subagent(prompt: str) -> str:
         results = []
 
         for block in tool_calls:
-            output = execute_tool(block, SUB_HANDLERS)
+            output = (dispatch or execute_tool)(block, handlers)
 
             # 仅用于终端观察子代理在做什么，不进入主代理上下文
             print(

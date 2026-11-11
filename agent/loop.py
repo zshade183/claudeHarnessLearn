@@ -8,6 +8,7 @@ from agent.hooks import trigger_hooks
 from agent.tools.executor import execute_tool
 from agent.context import COMPACTOR, MAX_REACTIVE_RETRIES
 from agent.background import inject_background_results
+from agent.teams import inject_team_messages
 # 顶部 import 合并成一行
 from agent.memory import (
     consolidate_memories,
@@ -37,6 +38,8 @@ def agent_loop(
     while True:
         # 只收已经完成的结果。如果命令还在跑，这里立即返回。
         inject_background_results(messages)
+        # 收取 lead 已经收到的队友回信。
+        inject_team_messages(messages)
 
         # 每次请求模型前，先把上下文压回安全范围
         messages[:] = COMPACTOR.prepare(messages, active_request)

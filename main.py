@@ -1,6 +1,8 @@
 import threading
 from copy import deepcopy
 from datetime import datetime
+from agent.teams import TEAM
+
 
 try:
     # 导入 readline 模块
@@ -77,22 +79,47 @@ def poll_clock(stop_event: threading.Event) -> None:
     while not stop_event.wait(1.0):
         poll_due_jobs(datetime.now())
 
+def run_team_turn(history: list) -> bool:
+    """发现队友回信时，开启一轮主代理对话。调用方持有 agent_lock。"""
+    # peek 只检查有没有信。实际取信由 agent_loop() 完成。
+    if not TEAM.bus.peek("lead"):
+        return True
 
-def process_cron_queue(
+    request = "Review the incoming teammate messages and report the result to the user."
+    history.append({"role": "user", "content": request})
+
+    print("  [team] lead has a new reply")
+
+    try:
+        agent_loop(history, request)
+    except Exception as error:
+        print(f"  [team] could not process reply: {error}")
+        return False
+
+    print_assistant_reply(history)
+    return True
+
+
+def process_pending_turns(
     stop_event: threading.Event,
     agent_lock: threading.Lock,
     history: list,
 ) -> None:
+    """
+    后台轮询线程的身体 ——它负责在用户没打字的时候，把定时任务和队友回信"补"进对话里。
+    """
     while not stop_event.wait(0.2):
         # 代理正在处理手动回合时，定时任务继续留在队列中。
         if not agent_lock.acquire(blocking=False):
             continue
         try:
-            if stop_event.is_set():
+            if stop_event.is_set():  # 退出线程
                 return
-            delivered = run_scheduled_turn(history)
+            delivered = run_scheduled_turn(history)  # 先交付定时任务
+            if delivered:  # 如果定时任务交付成功，再检查队友回信
+                delivered = run_team_turn(history)
         finally:
-            agent_lock.release()
+            agent_lock.release()  # 释放锁，允许其他线程获取锁
 
         if not delivered:
             # 接口或文件暂时不可用时，等一会再重试。
@@ -110,7 +137,7 @@ def main() -> None:
     workers = [
         threading.Thread(target=poll_clock, args=(stop_event,), daemon=True),
         threading.Thread(
-            target=process_cron_queue,
+            target=process_pending_turns,
             args=(stop_event, agent_lock, history),
             daemon=True,
         ),
