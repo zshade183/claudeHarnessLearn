@@ -1,4 +1,5 @@
 from agent.config import SYSTEM as BASE_SYSTEM
+from agent.mcp import mcp_clients
 from agent.memory import read_memory_index
 from agent.skills import SKILL_LOADER
 
@@ -30,3 +31,12 @@ def build_system_prompt(relevant_memories: str = "") -> str:
         )
 
     return "\n\n".join(sections)
+
+
+def append_mcp_status(system: str) -> str:
+    """在已有的系统提示后面补充当前连接状态。"""
+    if not mcp_clients:
+        return system
+
+    connected_servers = ", ".join(mcp_clients)
+    return f"{system}\n\nConnected MCP servers: {connected_servers}"

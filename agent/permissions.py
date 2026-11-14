@@ -1,6 +1,7 @@
 import re
 import threading
 
+from agent import mcp
 from agent.config import TOOL_CWD, WORKDIR
 
 
@@ -67,6 +68,12 @@ def check_rules(tool_name: str, args: dict) -> str | None:
     """
     Check the permissions of the tool call.
     """
+    if tool_name.startswith("mcp__"):
+        if mcp.mcp_tool_policies.get(tool_name) == "allow":
+            return None
+        # 宿主没有明确授予 allow 的 MCP 工具都需要确认。
+        return "MCP tool requires confirmation"
+
     for rule in PERMISSION_RULES:
         if tool_name in rule["tools"] and rule["check"](args):
             return rule["message"]

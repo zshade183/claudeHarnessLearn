@@ -2,8 +2,8 @@ from collections.abc import Callable
 
 from agent.client import client
 from agent.config import MODEL
-from agent.prompts import build_system_prompt
-from agent.tools.registry import TOOLS, TOOL_HANDLERS
+from agent.prompts import append_mcp_status, build_system_prompt
+from agent.tools.registry import assemble_tool_pool
 from agent.hooks import trigger_hooks
 from agent.tools.executor import execute_tool
 from agent.context import COMPACTOR, MAX_REACTIVE_RETRIES
@@ -44,12 +44,15 @@ def agent_loop(
         # 每次请求模型前，先把上下文压回安全范围
         messages[:] = COMPACTOR.prepare(messages, active_request)
 
+        # 连接工具可能刚登记了一个服务，下一次请求前重新组装。
+        tools, handlers = assemble_tool_pool()
+
         try:
             response = client.messages.create(
                 model=MODEL,
-                system=system,
+                system=append_mcp_status(system),
                 messages=messages,
-                tools=TOOLS,
+                tools=tools,
                 max_tokens=8000,
             )
             reactive_retries = 0  # 成功一次就重置重试额度
@@ -115,7 +118,7 @@ def agent_loop(
             else:
                 output = execute_tool(
                     block,
-                    TOOL_HANDLERS,
+                    handlers,
                     allow_background=True,
                 )
 
