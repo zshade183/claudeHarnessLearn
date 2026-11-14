@@ -1,6 +1,9 @@
 import threading
 from copy import deepcopy
 from datetime import datetime
+
+from anthropic import APIError
+
 from agent.teams import TEAM
 
 
@@ -18,6 +21,7 @@ try:
 except ImportError:
     pass
 
+from agent.background import BACKGROUND
 from agent.loop import agent_loop
 from agent.hooks import trigger_hooks
 from agent.scheduler import (
@@ -56,7 +60,7 @@ def run_scheduled_turn(history: list) -> bool:
             print(f"  [cron] delivered {job.id}: {job.prompt[:60]}")
 
     try:
-        # 上下文压缩会修改消息。用副本跑定时回合，失败时保留原对话。
+        # 上下文压缩会修改消息。用副本跑定时回合，便于在首次交付失败时回退。
         scheduled_history = deepcopy(history)
         request = "\n\n".join(f"[Scheduled] {job.prompt}" for job in jobs)
         scheduled_history.append({"role": "user", "content": request})
@@ -66,6 +70,9 @@ def run_scheduled_turn(history: list) -> bool:
         # 因此后续出错只报告，避免把整次工作再执行一遍。
         if not acknowledged:
             restore_cron_jobs(jobs)
+        else:
+            # 指令已经交付，保留这一轮收取的通知和执行过的工具结果。
+            history[:] = scheduled_history
         print(f"  [cron] scheduled turn failed: {type(error).__name__}: {error}")
         return False
 
@@ -100,16 +107,33 @@ def run_team_turn(history: list) -> bool:
     return True
 
 
+def run_background_turn(history: list) -> bool:
+    """交付已结束的后台命令。调用方须持有 agent_lock。"""
+    if not BACKGROUND.has_ready():
+        return True
+
+    request = "Review the completed background commands and report their results."
+    history.append({"role": "user", "content": request})
+
+    try:
+        # 完成通知由主循环取走并加入本轮消息。
+        agent_loop(history, request)
+    except Exception as error:
+        print(f"  [background] could not process result: {error}")
+        return False
+
+    print_assistant_reply(history)
+    return True
+
+
 def process_pending_turns(
     stop_event: threading.Event,
     agent_lock: threading.Lock,
     history: list,
 ) -> None:
-    """
-    后台轮询线程的身体 ——它负责在用户没打字的时候，把定时任务和队友回信"补"进对话里。
-    """
+    """终端空闲时处理定时任务、队友回信和后台命令结果。"""
     while not stop_event.wait(0.2):
-        # 代理正在处理手动回合时，定时任务继续留在队列中。
+        # 手动回合持有锁时，等下一次检查再处理待交付事件。
         if not agent_lock.acquire(blocking=False):
             continue
         try:
@@ -118,6 +142,8 @@ def process_pending_turns(
             delivered = run_scheduled_turn(history)  # 先交付定时任务
             if delivered:  # 如果定时任务交付成功，再检查队友回信
                 delivered = run_team_turn(history)
+            if delivered:
+                delivered = run_background_turn(history)
         finally:
             agent_lock.release()  # 释放锁，允许其他线程获取锁
 
@@ -162,7 +188,14 @@ def main() -> None:
             with agent_lock:
                 trigger_hooks("UserPromptSubmit", query)
                 history.append({"role": "user", "content": query})
-                agent_loop(history, query)
+                try:
+                    agent_loop(history, query)
+                except APIError as error:
+                    # 保留已经写入对话的工具结果，并记录本轮失败。
+                    history.append({
+                        "role": "assistant",
+                        "content": f"[Error] {type(error).__name__}: {error}",
+                    })
                 print_assistant_reply(history)
     finally:
         stop_event.set()

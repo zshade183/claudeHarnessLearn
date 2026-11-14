@@ -19,6 +19,7 @@ TASKS_DIR = WORKDIR / ".tasks"  #任务目录
 
 
 MODEL = os.environ["MODEL_ID"]
+FALLBACK_MODEL = os.getenv("FALLBACK_MODEL_ID")
 BASE_URL = os.getenv("ANTHROPIC_BASE_URL")
 
 ENVIRONMENT_PROMPT = (

@@ -1,5 +1,6 @@
 import secrets
 import threading
+from collections import deque
 from collections.abc import Callable
 
 from agent import tasks
@@ -18,6 +19,14 @@ TEAMMATE_TASK_TOOLS = [
 PLAN_BLOCKED_TOOLS = {"bash", "write_file", "edit_file", "claim_task", "complete_task"}
 
 
+class TeammateShutdown(Exception):
+    """关机已确认，用来结束队友当前的循环。"""
+
+
+class TeammatePlanRequired(Exception):
+    """Lead 要求先交计划，暂停当前工作回合。"""
+
+
 class TeammateRuntime:
     """队友保留自己的对话，处理来信，并在空闲时认领任务。"""
 
@@ -34,6 +43,7 @@ class TeammateRuntime:
         self.run_turn = self.run_work_turn if run_turn is None else run_turn
         self.shutdown_matches = shutdown_matches
         self.messages: list[dict] = []
+        self._inbox: deque[dict] = deque()
         self._plan_lock = threading.Lock()
         self._plan_request_id: str | None = None
         self.pending_plan_id: str | None = None
@@ -90,6 +100,47 @@ class TeammateRuntime:
         finally:
             TOOL_CWD.reset(token)
 
+    def check_shutdown(self, _messages: list) -> None:
+        """在请求模型前检查 Lead 发来的有效关机请求。"""
+        self._inbox.extend(self.bus.read_inbox(self.name))
+        for message in self._inbox:
+            if (
+                message["type"] == "shutdown_request"
+                and message["from"] == "lead"
+                and self._acknowledge_shutdown(message)
+            ):
+                raise TeammateShutdown
+
+    def collect_work_messages(self, messages: list) -> None:
+        """把普通来信追加到即将发给模型的对话。"""
+        self.check_shutdown(messages)
+
+        with self._plan_lock:
+            if self._plan_request_id is not None:
+                raise TeammatePlanRequired
+
+        blocks = []
+
+        # 控制消息留在队首，由外层循环按顺序处理。
+        while self._inbox and self._inbox[0]["type"] == "message":
+            message = self._inbox.popleft()
+            blocks.append({
+                "type": "text",
+                "text": f"[Message from {message['from']}] {message['content']}",
+            })
+
+        if not blocks:
+            return
+
+        if messages and messages[-1]["role"] == "user":
+            last = messages[-1]
+            if isinstance(last["content"], str):
+                last["content"] = [{"type": "text", "text": last["content"]}]
+            # 工具结果保留在前面，来信作为文本块接在后面。
+            last["content"].extend(blocks)
+        else:
+            messages.append({"role": "user", "content": blocks})
+
     def run_work_turn(self, messages: list) -> str:
         return run_subagent_turn(
             messages,
@@ -101,6 +152,8 @@ class TeammateRuntime:
                 "complete_task": self.finish_task,
             },
             dispatch=self.dispatch_tool,
+            before_model_call=self.collect_work_messages,
+            max_model_calls=None,
             system=self.system,
         )
 
@@ -135,6 +188,7 @@ class TeammateRuntime:
             self.messages,
             allowed_tools={"read_file", "glob"},
             dispatch=self.dispatch_tool,
+            before_model_call=self.check_shutdown,
             system=self.system,
         )
 
@@ -208,27 +262,36 @@ class TeammateRuntime:
     def run(self, initial_task: tasks.Task | None = None) -> None:
         try:
             self._run(initial_task)
+        except TeammateShutdown:
+            pass  # 关机确认已发送，由 finally 释放任务分配。
         except Exception as error:
             self.bus.send(self.name, "lead", str(error), msg_type="error")
         finally:
             tasks.release_teammate_assignment(self.name)
 
     def _run(self, initial_task: tasks.Task | None) -> None:
-        inbox = [self.assigned_message(initial_task)] if initial_task else []
+        if initial_task is not None:
+            self._inbox.append(self.assigned_message(initial_task))
+
         while True:
-            if not inbox:
+            # 处理邮箱中的消息。
+            if not self._inbox:
                 # 有信先处理。邮箱等待超时以后，空闲队友才尝试找新任务。
-                inbox = self.bus.wait_for_messages(self.name, timeout=2.0)
-                if not inbox:
+                self._inbox.extend(
+                    self.bus.wait_for_messages(self.name, timeout=2.0)
+                )
+                # 如果邮箱为空，尝试找新任务。
+                if not self._inbox:
                     with self._plan_lock:
                         task = (
                             tasks.claim_next_task(self.name)
                             if self._plan_request_id is None else None
                         )
                     if task is not None:
-                        inbox = [self.assigned_message(task)]
-
-            for message in inbox:
+                        self._inbox.append(self.assigned_message(task))
+            # 处理邮箱中的消息。
+            while self._inbox:
+                message = self._inbox.popleft()
                 kind = message["type"]
                 from_lead = message["from"] == "lead"
                 if kind == "shutdown_request" and from_lead:
@@ -262,7 +325,10 @@ class TeammateRuntime:
                     "role": "user",
                     "content": f"[Message from {message['from']}] {content}",
                 })
-                result = self.run_turn(self.messages)
+                try:
+                    result = self.run_turn(self.messages)
+                except TeammatePlanRequired:
+                    result = None
 
                 # complete_task 先记完成。等模型回合返回后，才释放工作目录。
                 with self._plan_lock:
@@ -273,13 +339,16 @@ class TeammateRuntime:
                         self._plan_task_id = None
                     waiting = self._plan_request_id is not None
 
+                if result is None:
+                    # 工具结果已保留，回到收件箱处理计划请求。
+                    continue
+
                 self.bus.send(self.name, "lead", result, msg_type="result")
                 if not waiting:
                     self.bus.send(
                         self.name, "lead", "Waiting for more work.",
                         msg_type="idle_notification",
                     )
-            inbox = []
 
 
 class TeamManager:

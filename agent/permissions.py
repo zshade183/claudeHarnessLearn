@@ -1,4 +1,8 @@
-import re
+"""
+权限检查模块。
+检查文件路径、Shell 命令和 MCP 工具的执行权限。
+"""
+
 import threading
 
 from agent import mcp
@@ -26,43 +30,15 @@ def check_deny_list(command: str) -> str | None:
             return f"Blocked: '{pattern}' is on the deny list"
     return None
 
-# 定义destructive命令的正则表达式
-DESTRUCTIVE_COMMAND_WORD = re.compile(
-    r"(?i)(?:^|[;&|()\n])\s*(?:rm|del)(?=\s|$|[;&|()])"
-)
 
-
-def contains_destructive_command(command: str) -> bool:
-    """
-    Check if the command contains any destructive commands.
-    """
-    return bool(DESTRUCTIVE_COMMAND_WORD.search(command))  
-
-# 定义权限规则
 def path_outside_workspace(args: dict) -> bool:
     cwd = (TOOL_CWD.get() or WORKDIR).resolve()
-    return not (cwd / args.get("path", "")).resolve().is_relative_to(cwd)
-
-
-PERMISSION_RULES = [
-    {  # 读取文件、写入文件、编辑文件工具
-        "tools": ["read_file", "write_file", "edit_file"],
-        "check": path_outside_workspace,
-        "message": "Writing outside workspace",
-    },
-    {  # bash工具
-        "tools": ["bash"],
-        "check": lambda args: (
-            contains_destructive_command(args.get("command", ""))
-            or any(
-                kw in args.get("command", "")
-                for kw in ["rm ", "> /etc/", "chmod 777"]
-            )
-        ),
-        "message": "Potentially destructive command",
-    },
-]
-
+    try:
+        path = (cwd / args["path"]).resolve()
+    except (OSError, ValueError, RuntimeError):
+        # 无法确认实际位置时，同样拒绝文件操作。
+        return True
+    return not path.is_relative_to(cwd)
 
 def check_rules(tool_name: str, args: dict) -> str | None:
     """
@@ -74,17 +50,14 @@ def check_rules(tool_name: str, args: dict) -> str | None:
         # 宿主没有明确授予 allow 的 MCP 工具都需要确认。
         return "MCP tool requires confirmation"
 
-    for rule in PERMISSION_RULES:
-        if tool_name in rule["tools"] and rule["check"](args):
-            return rule["message"]
     return None
+
 
 def ask_user(tool_name: str, args: dict, reason: str) -> str:
     """
     Ask the user for permission to run the tool call.
     """
-    # 定时任务在后台线程中执行。终端输入由主线程负责，
-    # 需要人工批准的操作在定时回合中直接拒绝。
+    # 终端输入由主线程负责。后台回合无法询问用户，直接拒绝。
     if threading.current_thread() is not threading.main_thread():
         print(f"[permission] Background turn cannot request approval: {reason}")
         return "deny"
@@ -95,15 +68,29 @@ def ask_user(tool_name: str, args: dict, reason: str) -> str:
     choice = input("   Allow? [y/N] ").strip().lower()
     return "allow" if choice in ("y", "yes") else "deny"
 
+
 def check_permission(block) -> bool:
-    """
-    检查工具调用是否有用权限。
-    """
-    if block.name == "bash":
-        reason = check_deny_list(block.input.get("command", ""))
-        if reason:
-            print(f"\n\033[31m[blocked] {reason}\033[0m")
+    """先处理直接拒绝的条件，再按工具规则决定是否询问用户。"""
+    if block.name in {"read_file", "write_file", "edit_file"}:
+        path = block.input.get("path")
+        # 先确认是文字路径，再检查它最终指到哪里。
+        if not isinstance(path, str) or path_outside_workspace(block.input):
+            print("[blocked] File path is invalid or outside the working directory.")
             return False
+
+    if block.name == "bash":
+        command = block.input.get("command")
+        if not isinstance(command, str) or not command.strip():
+            print("[blocked] Shell command must be a non-empty string.")
+            return False
+
+        reason = check_deny_list(command)
+        if reason:
+            print(f"[blocked] {reason}")
+            return False
+
+        # 先确认，再由执行器决定本次命令在前台还是后台运行。
+        return ask_user(block.name, block.input, "Shell command") == "allow"
 
     reason = check_rules(block.name, block.input)
 
@@ -114,9 +101,12 @@ def check_permission(block) -> bool:
 
     return True
 
+
 def permission_hook(block):
     """
     Hook to check the permissions of the tool call.
+    如果没有权限，返回"Permission denied."。
+    如果有权限，返回None。
     """
 
     if not check_permission(block):

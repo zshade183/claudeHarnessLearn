@@ -5,6 +5,7 @@
 """
 
 from collections.abc import Callable
+from itertools import count
 
 from agent.client import client
 from agent.config import MODEL, SUB_SYSTEM
@@ -57,6 +58,8 @@ def run_subagent_turn(
     extra_tools: list[dict] | None = None,
     extra_handlers: dict | None = None,
     dispatch: Callable | None = None,
+    before_model_call: Callable[[list], None] | None = None,
+    max_model_calls: int | None = 30,
     system: str = SUB_SYSTEM,
 ) -> str:
     """用指定的工具范围完成一轮对话。
@@ -65,6 +68,8 @@ def run_subagent_turn(
     :param extra_tools: 这轮额外提供给模型的工具描述
     :param extra_handlers: 这轮额外的工具执行函数
     :param dispatch: 队友可在基础执行器之前检查任务和审批状态
+    :param before_model_call: 每次请求模型前，可向当前对话补充消息
+    :param max_model_calls: 本轮请求模型的次数上限，None 表示由工作结束或关机控制
     :return: 子系统响应
     """
     # 额外工具只加入当前回合。最后筛选工具描述和执行函数，保证两边一致。
@@ -78,9 +83,12 @@ def run_subagent_turn(
             if name in allowed_tools
         }
 
-    # 下面接原来的 for _ in range(30):
-    # 最多 30 轮，作为兜底防止子代理陷入死循环（主代理循环没有此上限）
-    for _ in range(30):
+    # 一次性子代理默认限制 30 次，长期队友可以持续处理工具结果。
+    attempts = count() if max_model_calls is None else range(max_model_calls)
+    for _ in attempts:
+        if before_model_call is not None:
+            before_model_call(messages)
+
         response = client.messages.create(
             model=MODEL,
             system=system,
@@ -136,6 +144,6 @@ def run_subagent_turn(
             "content": results,
         })
 
-    # 达到 30 轮仍未给出最终答案，强制中止
+    # 达到请求次数上限时，给调用方返回停止原因。
     print("\033[35m[Subagent stopped]\033[0m")
-    return "Subagent stopped after 30 turns without a final answer."
+    return f"Subagent stopped after {max_model_calls} turns without a final answer."

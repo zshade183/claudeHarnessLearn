@@ -8,6 +8,9 @@ import json
 from pathlib import Path
 import re
 import uuid
+
+from anthropic import APIError
+
 from agent.client import client
 from agent.config import MODEL, TOOL_RESULTS_DIR, TRANSCRIPT_DIR
 
@@ -744,7 +747,11 @@ class ContextCompactor:
             tail_start -= 1
 
         old_history = messages[:tail_start] if tail_start else messages
-        summary = self.summarize_history(old_history)
+        try:
+            summary = self.summarize_history(old_history)
+        except APIError:
+            # 摘要请求失败时，仍可用归档和保留的消息继续。
+            summary = "Earlier conversation was archived after the context limit was reached."
 
         message = self.summary_message(
             "Reactive compact",
