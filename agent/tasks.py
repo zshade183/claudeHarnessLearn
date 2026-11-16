@@ -7,21 +7,15 @@
 """
 from dataclasses import asdict, dataclass
 from contextlib import ExitStack, contextmanager
-import errno
 import json
-import os
 import re
 import secrets
 import threading
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-if os.name == "nt":
-    import msvcrt
-else:
-    import fcntl
-
 from agent.config import TASKS_DIR, WORKDIR
+from agent.filelocks import file_lock as _file_lock
 
 @dataclass
 class Task:
@@ -241,32 +235,6 @@ class TaskStore:
 TASKS = TaskStore(TASKS_DIR)
 task_lock = threading.RLock()
 _lock_state = threading.local()
-
-
-@contextmanager
-def _file_lock(path: Path, *, blocking: bool = True):
-    with path.open("a+b") as handle:
-        handle.seek(0)
-        try:
-            if os.name == "nt":
-                mode = msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK
-                msvcrt.locking(handle.fileno(), mode, 1)
-            else:
-                mode = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
-                fcntl.flock(handle.fileno(), mode)
-        except OSError as error:
-            if not blocking and error.errno in {errno.EACCES, errno.EAGAIN}:
-                raise BlockingIOError(f"Task is in use: {path.stem}") from error
-            raise
-
-        try:
-            yield
-        finally:
-            handle.seek(0)
-            if os.name == "nt":
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 @contextmanager

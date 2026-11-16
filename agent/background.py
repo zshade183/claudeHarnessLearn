@@ -121,8 +121,15 @@ class BackgroundManager:
             # 任务完成，添加到已完成列表
             self._ready.append(task_id)
     
+    def has_pending(self) -> bool:
+        """是否还有未交付的后台任务，包括已经结束、排队等取的结果。
+        还有没有结果要等着交付"""
+        with self._lock:
+            return bool(self.tasks)
+
     def has_ready(self) -> bool:
-        """检查是否有已结束、等待交付的后台任务。"""
+        """检查是否有已结束、等待交付的后台任务。
+        现在有没有结果可以取走。"""
         with self._lock:
             return bool(self._ready)
 

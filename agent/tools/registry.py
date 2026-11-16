@@ -10,6 +10,7 @@ from agent.skills import SKILL_LOADER
 from agent.tools.cron_tools import CRON_HANDLERS, CRON_TOOLS
 from agent.tools.task_tools import TASK_HANDLERS, TASK_TOOLS
 from agent.tools.team_tools import TEAM_HANDLERS, TEAM_TOOLS
+from agent.tools.workflow_tools import WORKFLOW_TOOL, run_workflow
 
 
 # 注册工具 
@@ -124,6 +125,7 @@ TOOLS = [
     *TASK_TOOLS,
     *CRON_TOOLS,
     *TEAM_TOOLS,
+    WORKFLOW_TOOL,
 ]
 
 TOOL_HANDLERS = {
@@ -132,6 +134,7 @@ TOOL_HANDLERS = {
     "task": run_subagent,
     "load_skill": SKILL_LOADER.load,
     "connect_mcp": mcp.connect_mcp,
+    "Workflow": run_workflow,
     **TASK_HANDLERS,
     **CRON_HANDLERS,
     **TEAM_HANDLERS,

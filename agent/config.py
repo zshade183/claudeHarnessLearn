@@ -16,9 +16,32 @@ TOOL_RESULTS_DIR = WORKDIR / ".task_outputs" / "tool-results"  #大工具调用�
 MEMORY_DIR = WORKDIR / ".memory"  #记忆目录
 MEMORY_INDEX = MEMORY_DIR / "MEMORY.md"  #记忆索引文件
 TASKS_DIR = WORKDIR / ".tasks"  #任务目录
+WORKFLOW_RUNTIME_DIR = WORKDIR / ".runtime"  #工作流运行时目录
+
+
+def read_int_setting(name: str, *, default: int, minimum: int) -> int:
+    """读取整数配置，并检查它是否达到最小值。"""
+    message = f"{name} must be an integer >= {minimum}"
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError as error:
+        raise ValueError(message) from error
+
+    if value < minimum:
+        raise ValueError(message)
+    return value
 
 
 MODEL = os.environ["MODEL_ID"]
+GOAL_EVALUATOR_MODEL = (
+    os.getenv("GOAL_EVALUATOR_MODEL_ID")
+    or os.getenv("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+    or MODEL
+)
+MAX_TURNS = read_int_setting("MAX_TURNS", default=0, minimum=0)
+MAX_GOAL_BLOCKS = read_int_setting(
+    "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP", default=8, minimum=1
+)
 FALLBACK_MODEL = os.getenv("FALLBACK_MODEL_ID")
 BASE_URL = os.getenv("ANTHROPIC_BASE_URL")
 

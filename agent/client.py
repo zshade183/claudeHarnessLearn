@@ -31,6 +31,14 @@ class RecoveryState:
     consecutive_529: int = 0
 
 
+def response_token_count(response) -> int:
+    """统计模型响应报告的输入和输出 token，缺失的字段按零处理。"""
+    usage = getattr(response, "usage", None)
+    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    return input_tokens + output_tokens
+
+
 def retry_delay(attempt: int) -> float:
     """在随次数翻倍的基础等待时间上，增加最多 25% 的随机量。"""
     base = 2 ** attempt

@@ -1,6 +1,8 @@
+import sys
 import threading
 from copy import deepcopy
 from datetime import datetime
+from time import sleep
 
 from anthropic import APIError
 
@@ -22,6 +24,9 @@ except ImportError:
     pass
 
 from agent.background import BACKGROUND
+from agent.client import client
+from agent.config import GOAL_EVALUATOR_MODEL
+from agent.goals import CLEAR_ALIASES, GoalController, GoalError, PromptGoalEvaluator
 from agent.loop import agent_loop
 from agent.hooks import trigger_hooks
 from agent.scheduler import (
@@ -34,6 +39,9 @@ from agent.scheduler import (
 
 
 def print_assistant_reply(history: list) -> None:
+    if not history or history[-1].get("role") != "assistant":
+        return
+
     content = history[-1]["content"]
     if isinstance(content, list):
         for block in content:
@@ -44,15 +52,21 @@ def print_assistant_reply(history: list) -> None:
     print()
 
 
-def run_scheduled_turn(history: list) -> bool:
-    """交付一批到点任务。调用方须持有 agent_lock。"""
+def run_scheduled_turn(history: list, *, collect_background: bool = True) -> bool:
+    """交付一批到点任务。调用方须持有 agent_lock
+    params:
+        history: 上一回合的对话历史
+    return:
+        是否成功交付所有任务
+    """
     jobs = consume_cron_queue()
     if not jobs:
         return True
 
-    acknowledged = False
+    acknowledged = False  # 是否成功交付所有任务
 
     def confirm_delivery() -> None:
+        """确认交付所有任务"""
         nonlocal acknowledged
         acknowledge_cron_jobs(jobs)
         acknowledged = True
@@ -64,7 +78,12 @@ def run_scheduled_turn(history: list) -> bool:
         scheduled_history = deepcopy(history)
         request = "\n\n".join(f"[Scheduled] {job.prompt}" for job in jobs)
         scheduled_history.append({"role": "user", "content": request})
-        agent_loop(scheduled_history, request, on_first_response=confirm_delivery)
+        agent_loop(
+            scheduled_history,
+            request,
+            on_first_response=confirm_delivery,
+            collect_background=collect_background,
+        )
     except Exception as error:
         # 首次响应前失败可以重投。模型已接收的任务可能已经调用了工具，
         # 因此后续出错只报告，避免把整次工作再执行一遍。
@@ -86,7 +105,7 @@ def poll_clock(stop_event: threading.Event) -> None:
     while not stop_event.wait(1.0):
         poll_due_jobs(datetime.now())
 
-def run_team_turn(history: list) -> bool:
+def run_team_turn(history: list, *, collect_background: bool = True) -> bool:
     """发现队友回信时，开启一轮主代理对话。调用方持有 agent_lock。"""
     # peek 只检查有没有信。实际取信由 agent_loop() 完成。
     if not TEAM.bus.peek("lead"):
@@ -98,7 +117,7 @@ def run_team_turn(history: list) -> bool:
     print("  [team] lead has a new reply")
 
     try:
-        agent_loop(history, request)
+        agent_loop(history, request, collect_background=collect_background)
     except Exception as error:
         print(f"  [team] could not process reply: {error}")
         return False
@@ -107,17 +126,24 @@ def run_team_turn(history: list) -> bool:
     return True
 
 
-def run_background_turn(history: list) -> bool:
-    """交付已结束的后台命令。调用方须持有 agent_lock。"""
+def run_background_turn(history: list, *, goal: GoalController) -> bool:
+    """交付已结束的后台命令。交互模式下调用方须持有 agent_lock。"""
     if not BACKGROUND.has_ready():
         return True
 
+    active = goal.active if goal.waiting_for_background else None
     request = "Review the completed background commands and report their results."
+    if active is not None:
+        request = (
+            "Continue the current goal using the background results.\n"
+            f"Condition: {active.condition}"
+        )
+
     history.append({"role": "user", "content": request})
 
     try:
         # 完成通知由主循环取走并加入本轮消息。
-        agent_loop(history, request)
+        agent_loop(history, request, goal=goal if active is not None else None)
     except Exception as error:
         print(f"  [background] could not process result: {error}")
         return False
@@ -130,6 +156,7 @@ def process_pending_turns(
     stop_event: threading.Event,
     agent_lock: threading.Lock,
     history: list,
+    goal: GoalController,
 ) -> None:
     """终端空闲时处理定时任务、队友回信和后台命令结果。"""
     while not stop_event.wait(0.2):
@@ -139,33 +166,83 @@ def process_pending_turns(
         try:
             if stop_event.is_set():  # 退出线程
                 return
-            delivered = run_scheduled_turn(history)  # 先交付定时任务
-            if delivered:  # 如果定时任务交付成功，再检查队友回信
-                delivered = run_team_turn(history)
-            if delivered:
-                delivered = run_background_turn(history)
+            # Goal 已在等结果时，完成通知留给能接续 Goal 的后台回合。
+            collect_background = not goal.waiting_for_background
+            cron_ok = run_scheduled_turn(history, collect_background=collect_background)
+            team_ok = run_team_turn(history, collect_background=collect_background)
+            background_ok = run_background_turn(history, goal=goal)
         finally:
             agent_lock.release()  # 释放锁，允许其他线程获取锁
 
-        if not delivered:
-            # 接口或文件暂时不可用时，等一会再重试。
+        if not (cron_ok and team_ok and background_ok):
+            # 有一处失败，就稍等一下再进入下一轮检查。
             stop_event.wait(1.0)
 
 
-def main() -> None:
+def submit_query(query: str, history: list, goal: GoalController) -> None:
+    """处理一条终端输入，供交互模式和单次执行共用。"""
+    parts = query.split(maxsplit=1)
+    if not parts:
+        return
+
+    if parts[0] == "/goal":
+        condition = parts[1].strip() if len(parts) == 2 else ""
+        if not condition:
+            print(goal.status())
+            return
+        if condition.lower() in CLEAR_ALIASES:
+            print(goal.clear())
+            return
+
+        try:
+            goal.set_goal(condition)
+        except GoalError as error:
+            print(f"Goal error: {error}")
+            return
+
+        # 后续照常处理用户请求，只把完成条件交给主模型。
+        query = condition
+
+    trigger_hooks("UserPromptSubmit", query)
+    history.append({"role": "user", "content": query})
+    try:
+        agent_loop(history, query, goal=goal)
+    except APIError as error:
+        # 保留已经写入对话的工具结果，并记录本轮失败。
+        history.append({
+            "role": "assistant",
+            "content": f"[Error] {type(error).__name__}: {error}",
+        })
+    print_assistant_reply(history)
+
+
+def main(argv: list[str] | None = None) -> None:
+    history = []
+    goal = GoalController(PromptGoalEvaluator(client, GOAL_EVALUATOR_MODEL))
+
+    if argv:
+        submit_query(" ".join(argv), history, goal)
+
+        # 单次模式自己交付后台通知，沿用刚才的对话和目标。
+        while goal.waiting_for_background:
+            if not run_background_turn(history, goal=goal):
+                break
+            if goal.waiting_for_background:
+                sleep(0.2)
+        return
+
     print("Agent Loop")
     print("Enter a question, press Enter to send. Type q to quit.\n")
 
     load_durable_jobs()
-    history = []
     agent_lock = threading.Lock()
     stop_event = threading.Event()
     workers = [
         threading.Thread(target=poll_clock, args=(stop_event,), daemon=True),
         threading.Thread(
             target=process_pending_turns,
-            args=(stop_event, agent_lock, history),
-            daemon=True,
+            args=(stop_event, agent_lock, history, goal),
+            daemon=True,  # 守时线程，不阻塞主进程退出
         ),
     ]
     started = []
@@ -186,17 +263,7 @@ def main() -> None:
                 break
 
             with agent_lock:
-                trigger_hooks("UserPromptSubmit", query)
-                history.append({"role": "user", "content": query})
-                try:
-                    agent_loop(history, query)
-                except APIError as error:
-                    # 保留已经写入对话的工具结果，并记录本轮失败。
-                    history.append({
-                        "role": "assistant",
-                        "content": f"[Error] {type(error).__name__}: {error}",
-                    })
-                print_assistant_reply(history)
+                submit_query(query, history, goal)
     finally:
         stop_event.set()
         for worker in started:
@@ -204,4 +271,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
